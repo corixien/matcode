@@ -1,0 +1,25 @@
+# build output
+/bin/
+/mtc
+/matcode
+
+# runtime (created by a running server)
+.mtc/
+logs/
+*.log
+avatars/
+data/
+
+# secrets — never commit
+.env
+.env.*
+
+# deps / tooling
+node_modules/
+vendor/
+
+# editor junk
+*.swp
+*~
+.idea/
+.vscode/
