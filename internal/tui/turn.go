@@ -29,7 +29,7 @@ func (a *App) submit(t *tab) (tea.Model, tea.Cmd) {
 		if cm.ID != "" {
 			return a.runUserCommand(cm, args)
 		}
-		return a.runCommand(id)
+		return a.runCommandArgs(id, args)
 	case strings.HasPrefix(text, "!"):
 		c.SetPrompt("")
 		return a.runShell(t, strings.TrimSpace(strings.TrimPrefix(text, "!")))

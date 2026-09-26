@@ -150,6 +150,11 @@ func New(opts Options) (*App, error) {
 		}
 		return nil, err
 	}
+	// Booting without a credential is allowed (row: /key) — say so once
+	// instead of failing, so the fix is discoverable from the status line.
+	if t := a.cur(); t != nil && t.built != nil && t.built.Engine.Provider == nil {
+		a.status = "no API key — type /key [provider] <key>"
+	}
 	return a, nil
 }
 

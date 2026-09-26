@@ -50,6 +50,10 @@ type Built struct {
 	Model  string // resolved provider/model
 	Cfg    *config.Config
 	Cwd    string
+	// ProviderErr carries why Engine.Provider is nil (missing API key,
+	// bad model ref): the build still succeeds so the TUI can boot and
+	// /key can fix it in place.
+	ProviderErr error
 	// Clients holds the live MCP connections, keyed by dial order;
 	// RestartMCP swaps an entry in place (§7 lifecycle, rows 43/46).
 	Clients []*mcp.Client
@@ -98,9 +102,11 @@ func New(ctx context.Context, o Options) (*Built, error) {
 	if model == "" {
 		return nil, fmt.Errorf("no model configured: set model in config.toml or pass -model")
 	}
-	provider, resolved, err := providers.For(cfg, model)
-	if err != nil {
-		return nil, err
+	provider, resolved, perr := providers.For(cfg, model)
+	if perr != nil {
+		// Boot anyway: the TUI must open without a credential so /key
+		// can set one. The first turn surfaces the same fixable error.
+		provider, resolved = nil, model
 	}
 
 	instructions, _ := cfg.Find("AGENTS.md")
@@ -221,7 +227,8 @@ func New(ctx context.Context, o Options) (*Built, error) {
 	}
 	b := &Built{
 		Engine: eng, Agent: ag, Model: resolved, Cfg: cfg, Cwd: o.Cwd,
-		Clients: clients,
+		ProviderErr: perr,
+		Clients:     clients,
 	}
 	// cleanup reads b.Clients at call time: a /mcp restart (row 46)
 	// replaces entries, and the final Close must reap the new ones.

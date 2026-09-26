@@ -186,6 +186,12 @@ func (a *App) cycleAgent(delta int) {
 
 // runCommand dispatches a slash / leader / palette command id.
 func (a *App) runCommand(id string) (tea.Model, tea.Cmd) {
+	return a.runCommandArgs(id, "")
+}
+
+// runCommandArgs is runCommand with the typed arguments ("/key openrouter
+// sk-…"); builtins that ignore arguments simply never read them.
+func (a *App) runCommandArgs(id, args string) (tea.Model, tea.Cmd) {
 	t := a.cur()
 	switch id {
 	case "quit", "exit", "w":
@@ -237,6 +243,8 @@ func (a *App) runCommand(id string) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "btw":
 		return a.openBtw()
+	case "key":
+		return a.openKey(args)
 	case "details":
 		if t != nil {
 			a.status = fmt.Sprintf("%s  model=%s  agent=%s  %d messages",

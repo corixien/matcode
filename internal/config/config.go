@@ -122,6 +122,11 @@ func Load(cwd string) (*Config, error) {
 	if isDir(filepath.Join(cwd, ".mtc")) {
 		cfg.ProjectDir = filepath.Join(cwd, ".mtc")
 	}
+	// Data-dir env (.env): persisted provider keys (/key in the TUI).
+	// Loaded before anything resolves a credential; the shell wins.
+	if err := loadDotEnvDirs(cfg.GlobalDir, cfg.ProjectDir); err != nil {
+		return nil, err
+	}
 
 	var merged file
 	for _, dir := range []string{cfg.GlobalDir, cfg.ProjectDir} {

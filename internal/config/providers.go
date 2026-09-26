@@ -25,6 +25,9 @@ func defaultProviders() map[string]Provider {
 			Dialect: "openai",
 			BaseURL: "https://openrouter.ai/api/v1",
 			APIKey:  EnvRef{Env: "OPENROUTER_API_KEY"},
+			// Full "vendor/model" path: OpenRouter ids keep their own
+			// vendor segment (catalog splits only the first slash).
+			DefaultModel: "anthropic/claude-sonnet-4.5",
 		},
 		"groq": {
 			Dialect: "openai",

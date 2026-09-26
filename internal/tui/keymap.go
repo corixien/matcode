@@ -185,6 +185,7 @@ func builtinSlashCommands() []SlashCommand {
 		{ID: "exit", Desc: "quit", Aliases: []string{"quit"}},
 		{ID: "export", Desc: "write the session to a file", Key: "ctrl+x x"},
 		{ID: "help", Desc: "show keybindings"},
+		{ID: "key", Desc: "set a provider API key (saved to .env)"},
 		{ID: "mcp", Desc: "mcp servers: list, enable, restart, logs"},
 		{ID: "models", Desc: "switch model", Key: "ctrl+x m"},
 		{ID: "new", Desc: "start a new session", Key: "ctrl+x n"},

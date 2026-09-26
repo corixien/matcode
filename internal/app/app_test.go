@@ -151,3 +151,27 @@ func TestOverlaySystemAndPermissions(t *testing.T) {
 		t.Error("permissions set should be loaded")
 	}
 }
+
+// TestNewBootsWithoutAPIKey proves the missing-credential path: app.New
+// still assembles the build (so the TUI can open and /key can fix it),
+// carrying the reason in ProviderErr and leaving Engine.Provider nil for
+// the engine guard to report at turn time.
+func TestNewBootsWithoutAPIKey(t *testing.T) {
+	cfg := fixture(t, "")
+	t.Setenv("MT_TEST_KEY", "")
+
+	built, err := New(context.Background(), Options{Cwd: t.TempDir(), Config: cfg})
+	if err != nil {
+		t.Fatalf("New without API key: %v", err)
+	}
+	defer built.Close()
+	if built.Engine.Provider != nil {
+		t.Error("Engine.Provider should be nil without a key")
+	}
+	if built.ProviderErr == nil {
+		t.Error("ProviderErr should carry the cause")
+	}
+	if built.Model == "" {
+		t.Error("model ref should still be resolved")
+	}
+}

@@ -28,6 +28,25 @@ func (o *overlay) key(k tea.KeyMsg, a *App) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	}
+	// The API-key dialog is a masked input (row: /key): type the key,
+	// enter persists it to the data dir .env, esc cancels.
+	if o.kind == "key" {
+		switch k.String() {
+		case "esc", "ctrl+c":
+			a.overlay = nil
+		case "enter":
+			input := o.query
+			a.overlay = nil
+			a.saveKey(input)
+		case "backspace":
+			o.backspace()
+		default:
+			if k.Type == tea.KeyRunes || k.String() == " " {
+				o.insert(string(k.Runes))
+			}
+		}
+		return a, nil
+	}
 	// The side question is a small input dialog (row 25): type the
 	// question, enter asks, enter/esc dismiss once answered.
 	if o.kind == "btw" {

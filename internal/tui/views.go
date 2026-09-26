@@ -101,6 +101,7 @@ func (a *App) settingsView(height, width int) string {
 		{"context limit", strconv.Itoa(a.cfg.ContextLimit)},
 		{"api port", strconv.Itoa(a.cfg.APIPort)},
 		{"providers", fmt.Sprint(len(a.cfg.Providers))},
+		{"api key", a.apiKeyStatus()},
 		{"references", fmt.Sprint(len(a.cfg.References))},
 	}
 	if t != nil {
@@ -117,6 +118,22 @@ func (a *App) settingsView(height, width int) string {
 	}
 	_ = height
 	return strings.Join(lines, "\n")
+}
+
+// apiKeyStatus reports the credential state for the current model's
+// provider — the env var name only, never the key itself.
+func (a *App) apiKeyStatus() string {
+	p, ok := a.cfg.Providers[providerOf(a.currentModel(), a.cfg.Model)]
+	if !ok {
+		return "unknown provider"
+	}
+	if p.APIKey.Env == "" {
+		return "n/a"
+	}
+	if _, err := p.ResolveKey(); err != nil {
+		return "missing — /key"
+	}
+	return "set (" + p.APIKey.Env + ")"
 }
 
 // titleStyle paints a route heading in the theme's primary color.
