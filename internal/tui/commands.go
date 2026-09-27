@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,6 +15,7 @@ import (
 	"matcode/internal/catalog"
 	"matcode/internal/cmds"
 	"matcode/internal/config"
+	"matcode/internal/providers"
 	"matcode/internal/store"
 	"matcode/internal/tui/theme"
 )
@@ -209,7 +211,10 @@ func (a *App) runCommandArgs(id, args string) (tea.Model, tea.Cmd) {
 	case "palette", "help":
 		return a.openPalette()
 	case "models":
-		return a.openPicker("model", "switch model", a.modelChoices())
+		m, c := a.openPicker("model", "switch model", a.modelChoices())
+		// Open the static list immediately, then widen it with the
+		// provider's real catalogue in the background.
+		return m, tea.Batch(c, a.fetchModelsLive())
 	case "agent":
 		return a.openPicker("agent", "switch agent", a.agentChoices())
 	case "themes":
@@ -267,8 +272,6 @@ func (a *App) runCommandArgs(id, args string) (tea.Model, tea.Cmd) {
 	}
 	return a, nil
 }
-
-// toggleSidebar flips the sidebar widget column (row 35).
 
 // modelChoices lists provider/model pairs from config, grouped by
 // provider: providers are walked in name order so the picker reads as
@@ -348,7 +351,130 @@ func chatModel(id string) bool {
 	return true
 }
 
-// agentChoices lists built-in agent ids.
+// fetchModelsLive asks every keyed provider, in parallel, for the
+// model catalogue behind its credential and reports the ids on the
+// loop as one message. The request is the same /models call used to
+// validate a key, so it costs one round trip per provider and never
+// blocks the UI.
+func (a *App) fetchModelsLive() tea.Cmd {
+	type target struct {
+		name string
+		p    config.Provider
+		key  string
+	}
+	var todo []target
+	for name, p := range a.cfg.Providers {
+		key, err := p.ResolveKey()
+		if err != nil || key == "" {
+			continue
+		}
+		todo = append(todo, target{name: name, p: p, key: key})
+	}
+	if len(todo) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		var (
+			wg   sync.WaitGroup
+			mu   sync.Mutex
+			live = make(map[string][]string, len(todo))
+		)
+		for _, t := range todo {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ids, err := providers.ListModels(t.p, t.key)
+				if err != nil || len(ids) == 0 {
+					return // keep whatever the static list says
+				}
+				mu.Lock()
+				live[t.name] = ids
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+		return modelsLiveMsg{live: live}
+	}
+}
+
+// applyModelsLive swaps the open model picker's items for the merged
+// list: providers the fetch reached show their whole catalogue, the
+// rest keep their preset ids, and the selection plus query survive the
+// swap so typing is never interrupted.
+func (a *App) applyModelsLive(live map[string][]string) (tea.Model, tea.Cmd) {
+	if len(live) == 0 || a.overlay == nil || a.overlay.kind != "model" {
+		return a, nil
+	}
+	cur := ""
+	if t := a.cur(); t != nil {
+		cur = t.sess.Meta.Model
+	}
+	a.overlay.items = mergeLiveModels(a.modelChoices(), live, cur)
+	a.overlay.clamp()
+	models, providersN := 0, 0
+	for _, ids := range live {
+		providersN++
+		models += len(ids)
+	}
+	a.status = fmt.Sprintf("live: %d models from %d providers", models, providersN)
+	return a, nil
+}
+
+// mergeLiveModels rewrites the static picker list so every provider
+// the fetch reached contributes its full live catalogue, while the
+// ones it could not reach keep their preset ids. Provider order comes
+// from the static list (so the menu keeps its grouping) with any
+// live-only provider appended alphabetically; the active model stays
+// first and duplicates are dropped.
+func mergeLiveModels(static []string, live map[string][]string, cur string) []string {
+	if len(live) == 0 {
+		return static
+	}
+	var order []string
+	seen := make(map[string]bool, len(live))
+	see := func(name string) {
+		if name != "" && !seen[name] {
+			seen[name] = true
+			order = append(order, name)
+		}
+	}
+	byProvider := make(map[string][]string, len(live)+1)
+	for _, it := range static {
+		if i := strings.IndexByte(it, '/'); i > 0 {
+			see(it[:i])
+			byProvider[it[:i]] = append(byProvider[it[:i]], it)
+			continue
+		}
+		byProvider[""] = append(byProvider[""], it)
+	}
+	extra := make([]string, 0, len(live))
+	for name := range live {
+		if !seen[name] {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	order = append(order, extra...)
+
+	var out []string
+	for _, name := range order {
+		ids, ok := live[name]
+		if !ok {
+			out = append(out, byProvider[name]...)
+			continue
+		}
+		for _, id := range ids {
+			if id != "" && chatModel(id) {
+				out = append(out, name+"/"+id)
+			}
+		}
+	}
+	out = append(out, byProvider[""]...)
+	if cur != "" {
+		out = append([]string{cur}, out...)
+	}
+	return dedupe(out)
+}
 
 // agentChoices lists built-in agent ids.
 func (a *App) agentChoices() []string { return agents.IDs() }

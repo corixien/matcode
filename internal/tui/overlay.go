@@ -63,9 +63,14 @@ func (o *overlay) fg(color string) lipgloss.Style {
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 }
 
-// filtered returns items matching the query (case-insensitive substring).
-// A mention query may carry a "#start-end" line range: it rides along for
-// display but must not take part in matching, or no path would ever match.
+// filtered returns items matching the query, fuzzy-ranked: exact
+// matches beat prefix matches beat substring beats subsequence; inside
+// a group shorter items rank first and ties keep list order. "cpt"
+// therefore surfaces CppParser over every a-c-p-t scatter, and
+// "snappy" still narrows a file list by subsequence alone. A mention
+// query may carry a "#start-end" line range: it rides along for
+// display but must not take part in matching, or no path would ever
+// match.
 func (o *overlay) filtered() []string {
 	if o.query == "" {
 		return o.items
@@ -80,11 +85,49 @@ func (o *overlay) filtered() []string {
 	if q == "" {
 		return o.items
 	}
-	var out []string
+	type hit struct {
+		it     string
+		rank   int
+		length int
+		pos    int
+	}
+	var hits []hit
 	for _, it := range o.items {
-		if strings.Contains(strings.ToLower(it), q) {
-			out = append(out, it)
+		lower := strings.ToLower(it)
+		rank := -1
+		pos := -1
+		switch {
+		case lower == q:
+			rank = 0
+		case strings.HasPrefix(lower, q):
+			rank = 1
+		default:
+			if i := strings.Index(lower, q); i >= 0 {
+				rank = 2
+				pos = i
+			} else if fuzzy(lower, q) {
+				rank = 3
+			}
 		}
+		if rank >= 0 {
+			hits = append(hits, hit{it: it, rank: rank, length: len([]rune(lower)), pos: pos})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].rank != hits[j].rank {
+			return hits[i].rank < hits[j].rank
+		}
+		if hits[i].length != hits[j].length {
+			return hits[i].length < hits[j].length
+		}
+		if hits[i].pos != hits[j].pos {
+			return hits[i].pos < hits[j].pos
+		}
+		return false
+	})
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.it)
 	}
 	return out
 }
@@ -128,10 +171,13 @@ func (o *overlay) backspace() {
 	o.clamp()
 }
 
-// view renders title, body, scrolling list, and hint line.
-func (o *overlay) view(height, width int) string {
+// view renders title, body, scrolling list, and hint line. optRoom is
+// how many option rows the frame has below the query line — the space
+// up to the prompt field — and only applies to anchored list kinds;
+// a value <= 0 derives it from height.
+func (o *overlay) view(height, width, optRoom int) string {
 	var lines []string
-	lines = append(lines, o.style().Bold(true).Render(truncate(o.title, width)))
+	lines = append(lines, o.titleRow(width))
 	switch {
 	case o.kind == "ask":
 		lines = append(lines, o.askBody(width)...)
@@ -141,9 +187,16 @@ func (o *overlay) view(height, width int) string {
 		lines = append(lines, o.fg(o.theme.Colors.Muted).Render("? "+o.query))
 		lines = append(lines, wrapAnsi(o.btwAnswer, width-2)...)
 	default:
-		lines = append(lines, o.queryLine())
+		// The typed query always sits centred: it is the line being
+		// edited, so it belongs in the middle of the frame rather
+		// than wherever the box happened to land.
+		lines = append(lines,
+			lipgloss.PlaceHorizontal(width, lipgloss.Center, o.queryLine()))
 		f := o.filtered()
-		room := height - len(lines) - 1
+		room := optRoom
+		if !o.anchored() || room <= 0 {
+			room = height - len(lines) - 1
+		}
 		if room < 3 {
 			room = 3
 		}
@@ -163,8 +216,47 @@ func (o *overlay) view(height, width int) string {
 			lines = append(lines, truncate(row, width))
 		}
 	}
-	lines = append(lines, o.fg(o.theme.Colors.Muted).Render(o.hint()))
+	// An anchored list carries its hint on the title row: the options
+	// run down to the prompt field, so a bottom hint would be behind it.
+	if !o.anchored() {
+		lines = append(lines, o.fg(o.theme.Colors.Muted).Render(o.hint()))
+	}
 	return strings.Join(lines, "\n")
+}
+
+// anchored reports whether this overlay is a config menu: the box is
+// pinned so the query line lands on the frame's middle row and the
+// options flow downward from it, ending behind the prompt field. Tool
+// dialogs (ask/diff/btw/tree) keep the old fully centred box.
+func (o *overlay) anchored() bool {
+	switch o.kind {
+	case "ask", "diff", "mcplog", "btw", "tree":
+		return false
+	}
+	return true
+}
+
+// titleRow is the box's first content row: the title on the left and,
+// for anchored menus, the hint pushed to the right edge so it stays
+// visible above the option list.
+func (o *overlay) titleRow(width int) string {
+	t := truncate(o.title, width)
+	if !o.anchored() {
+		return o.style().Bold(true).Render(t)
+	}
+	hint := o.hint()
+	if avail := width - lipgloss.Width(hint) - 2; avail >= 1 {
+		t = truncate(t, avail)
+	} else {
+		return o.style().Bold(true).Render(t)
+	}
+	gap := width - lipgloss.Width(t) - lipgloss.Width(hint)
+	if gap < 1 {
+		gap = 1
+	}
+	return o.style().Bold(true).Render(t) +
+		strings.Repeat(" ", gap) +
+		o.fg(o.theme.Colors.Muted).Render(hint)
 }
 
 // queryLine is the filter prompt shown above the list.

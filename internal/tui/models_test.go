@@ -114,3 +114,44 @@ func TestModelChoicesCatalogFallback(t *testing.T) {
 func sessWithModel(model string) *store.Session {
 	return &store.Session{Meta: store.Meta{ID: "ses_ghost", Model: model}}
 }
+
+// TestMergeLiveModels proves the fetched catalogue replaces the preset
+// block only for providers the fetch reached, keeps presets for the
+// rest, drops non-chat ids, and leaves the active model first.
+func TestMergeLiveModels(t *testing.T) {
+	static := []string{
+		"openai/gpt-4o-mini",
+		"anthropic/claude-fable-5",
+		"orphan/preset-1",
+	}
+	live := map[string][]string{
+		"openai":           {"gpt-5", "gpt-image-1", "text-embedding-3-small", "gpt-4o-mini"},
+		"zz-fresh/unknown": {"alpha", "beta"},
+	}
+	got := mergeLiveModels(static, live, "openai/gpt-5")
+	want := []string{
+		"openai/gpt-5",             // active model first
+		"openai/gpt-4o-mini",       // live ids, chat-capable only
+		"anthropic/claude-fable-5", // preset kept: not fetched
+		"orphan/preset-1",          // preset kept: not fetched
+		"zz-fresh/unknown/alpha",   // live-only provider appended
+		"zz-fresh/unknown/beta",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("mergeLiveModels = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("mergeLiveModels = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestMergeLiveModelsNoFetch: without live data the static list is the
+// answer, untouched.
+func TestMergeLiveModelsNoFetch(t *testing.T) {
+	static := []string{"openai/gpt-4o-mini"}
+	if got := mergeLiveModels(static, nil, ""); len(got) != 1 || got[0] != static[0] {
+		t.Fatalf("mergeLiveModels = %v, want %v", got, static)
+	}
+}

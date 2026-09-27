@@ -152,3 +152,76 @@ func TestChatQueuedPromptVisible(t *testing.T) {
 		t.Fatalf("queued prompt not visible:\n%s", v)
 	}
 }
+
+// TestComposerGrowsWithPrompt proves a prompt longer than the prompt
+// field wraps onto continuation rows instead of truncating, and that
+// the transcript yields the rows the box takes.
+func TestComposerGrowsWithPrompt(t *testing.T) {
+	c := newTestChat()
+	c.SetPrompt(strings.Repeat("word ", 40))
+
+	comp := c.composer(60)
+	rows := strings.Split(comp, "\n")
+	if len(rows) <= 3 {
+		t.Fatalf("prompt field did not grow: %d rows (border/line/border)", len(rows))
+	}
+	for _, l := range rows {
+		if lipglossWidth(l) > 60 {
+			t.Fatalf("prompt row too wide (%d): %q", lipglossWidth(l), l)
+		}
+	}
+
+	const height, width = 30, 60
+	v := c.View(height, width)
+	if n := strings.Count(v, "\n") + 1; n > height {
+		t.Fatalf("frame overflowed: %d rows > %d", n, height)
+	}
+	if c.PromptTop() != height-len(rows)-2 {
+		t.Fatalf("PromptTop = %d, want %d", c.PromptTop(), height-len(rows)-2)
+	}
+	if c.PromptBottom() > height {
+		t.Fatalf("PromptBottom = %d, past the frame height %d", c.PromptBottom(), height)
+	}
+	for _, l := range strings.Split(v, "\n") {
+		if lipglossWidth(l) > width {
+			t.Fatalf("view row too wide (%d): %q", lipglossWidth(l), l)
+		}
+	}
+}
+
+// TestComposerContinuationIndent proves a hard line break in the prompt
+// renders as a second row indented under the "> " marker.
+func TestComposerContinuationIndent(t *testing.T) {
+	c := newTestChat()
+	c.SetPrompt("first line\nsecond line")
+	rows := strings.Split(c.composer(60), "\n")
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want border + 2 lines + border", len(rows))
+	}
+	if !strings.Contains(rows[1], "> first line") {
+		t.Errorf("first row = %q, want the prompt marker", rows[1])
+	}
+	if !strings.Contains(rows[2], "  second line") {
+		t.Errorf("continuation row = %q, want a 2-space indent", rows[2])
+	}
+}
+
+// TestComposerKeepsTailWhenTallerThanFrame proves the box is capped at
+// the rows the frame can spare and keeps the end being typed.
+func TestComposerKeepsTailWhenTallerThanFrame(t *testing.T) {
+	c := newTestChat()
+	c.Resize(10, 60) // composerMax = 10-7 = 3 text rows
+	c.SetPrompt("one\ntwo\nthree\nfour\nfive")
+
+	rows := strings.Split(c.composer(60), "\n")
+	if len(rows) != 5 { // 3 text rows + top/bottom border
+		t.Fatalf("rows = %d, want 5 (3 text rows capped by the frame)", len(rows))
+	}
+	body := strings.Join(rows, "\n")
+	if !strings.Contains(body, "five") {
+		t.Errorf("tail of the prompt missing:\n%s", body)
+	}
+	if strings.Contains(body, "one") {
+		t.Errorf("head should have scrolled out:\n%s", body)
+	}
+}

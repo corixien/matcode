@@ -22,12 +22,26 @@ type Widget struct {
 	Lines []string
 }
 
-// sidebarWidth is the sidebar's column budget (before padding).
+// sidebarWidth is the sidebar's column budget at full width; Chat.View
+// shrinks it with the window instead of dropping it.
 const sidebarWidth = 30
 
-// sidebarMinWidth is the terminal width below which the sidebar hides
-// instead of squeezing the transcript into an unreadable column.
-const sidebarMinWidth = 100
+// sidebarFloor is the narrowest the sidebar is ever drawn.
+const sidebarFloor = 12
+
+// sidebarBudget is the sidebar's column budget at a given terminal
+// width: full width on a wide window, shrinking with the window
+// instead of disappearing when it narrows.
+func sidebarBudget(width int) int {
+	sw := sidebarWidth
+	if d := width / 4; d < sw {
+		sw = d
+	}
+	if sw < sidebarFloor {
+		sw = sidebarFloor
+	}
+	return sw
+}
 
 // ToggleSidebar flips the sidebar and reports its new state.
 func (c *Chat) ToggleSidebar() bool {

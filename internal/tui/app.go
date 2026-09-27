@@ -121,6 +121,15 @@ type turnDoneMsg struct {
 // under us (spec row 31) and the app should re-read them.
 type reloadMsg struct{}
 
+// modelsLiveMsg carries the model ids each keyed provider reports at
+// its /models endpoint, fetched once when the model picker opens so the
+// menu lists everything the credential can reach instead of only the
+// preset ids. Missing providers simply stay absent: the static list
+// remains their answer.
+type modelsLiveMsg struct {
+	live map[string][]string
+}
+
 // width0 is the width used before the first WindowSizeMsg.
 const width0 = 100
 
@@ -329,6 +338,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.saveProviderKey(m.name, m.key)
 		return a, nil
+	case modelsLiveMsg:
+		return a.applyModelsLive(m.live)
 	case *routes.AppendMsg, *routes.StreamMsg, *routes.TurnStartMsg,
 		*routes.ToolMsg, *routes.UsageMsg, *routes.TurnDoneMsg:
 		if t := a.cur(); t != nil {
@@ -372,21 +383,79 @@ func (a *App) View() string {
 	}
 	lines := strings.Split(body, "\n")
 	if a.overlay != nil {
-		dialog := a.overlay.view(a.height-4, a.width-6)
-		lines = overlayPanel(lines, dialog, a.height, a.width, a.theme)
+		// Keep a copy of the untouched frame: the composer/footer rows
+		// are painted back over the box afterwards, so menu options
+		// end behind the prompt field instead of over it.
+		orig := append([]string(nil), lines...)
+		dialog := a.overlay.view(a.height-4, a.width-6, a.optionRoom())
+		lines = overlayPanel(lines, dialog, a.height, a.width, a.theme,
+			a.overlay.anchored())
+		lines = repaintPrompt(orig, lines, a.promptTop())
 	}
 	if a.status != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(
 			lipgloss.Color(a.theme.Muted())).Render(truncate(a.status, a.width)))
+		if len(lines) > a.height {
+			lines = lines[len(lines)-a.height:] // same rule solid() applies
+		}
 	}
 	return a.solid(strings.Join(lines, "\n"))
 }
 
-// overlayPanel centers an overlay dialog as a bordered box on the
+// promptTop is the frame row where the composer starts on the chat
+// route (-1 elsewhere: sessions/settings have no prompt field to hide
+// behind).
+func (a *App) promptTop() int {
+	if a.route != "" {
+		return -1
+	}
+	t := a.cur()
+	if t == nil {
+		return -1
+	}
+	return t.chat.PromptTop()
+}
+
+// optionRoom is the number of rows an anchored menu may fill below its
+// query line: from the middle of the frame down to just above the
+// prompt field, so the last option lands on the border rather than
+// under the composer.
+func (a *App) optionRoom() int {
+	room := a.height/2 - 2 // fallback: stop short of the status row
+	if top := a.promptTop(); top > 0 {
+		room = top - a.height/2 - 2
+	}
+	if room < 3 {
+		room = 3
+	}
+	return room
+}
+
+// repaintPrompt copies the original composer+footer rows back over the
+// overlay box. The prompt field is the front-most layer of the frame:
+// anything the menu drew below it is covered, which is exactly how an
+// over-long option list disappears behind the prompt.
+func repaintPrompt(orig, lines []string, top int) []string {
+	if top < 0 {
+		return lines
+	}
+	for i := top; i < len(orig); i++ {
+		if i >= len(lines) {
+			break
+		}
+		lines[i] = orig[i]
+	}
+	return lines
+}
+
+// overlayPanel draws an overlay dialog as a bordered box on the
 // current frame. Dialog rows overwrite the body in place — appending
-// would push the box past the bottom edge, since the chat route already
-// fills the screen.
-func overlayPanel(lines []string, dialog string, height, width int, t theme.Theme) []string {
+// would push the box past the bottom edge, since the chat route
+// already fills the screen. anchored boxes are pinned with their query
+// row on the frame's middle row and clipped at the bottom edge, so a
+// tall list loses its tail (never its title or query) instead of
+// making solid() trim the top of the frame.
+func overlayPanel(lines []string, dialog string, height, width int, t theme.Theme, anchored bool) []string {
 	if width < 12 {
 		return lines
 	}
@@ -404,11 +473,21 @@ func overlayPanel(lines []string, dialog string, height, width int, t theme.Them
 	}
 	boxLines := strings.Split(box.Render(strings.Join(rows, "\n")), "\n")
 	start := (height - len(boxLines)) / 2
+	if anchored {
+		// box: border, title, query, … → query row = start+2.
+		start = height/2 - 2
+	}
 	if start < 0 {
 		start = 0
 	}
+	if max := height - start; len(boxLines) > max {
+		boxLines = boxLines[:max] // options run off the bottom edge
+	}
 	for len(lines) < start+len(boxLines) {
 		lines = append(lines, "")
+	}
+	if len(lines) > height {
+		lines = lines[:height]
 	}
 	for i, bl := range boxLines {
 		lines[start+i] = " " + bl

@@ -60,6 +60,13 @@ type Chat struct {
 	sidebar    bool   // sidebar widgets visible (row 35)
 	cwd        string // workdir the sidebar reads todos.json from
 	hideTokens bool   // [ui] show_tokens = false (row 38)
+
+	// promptTop is the frame row where the composer box starts and
+	// compH its height in rows. View recomputes both on every frame;
+	// App reads them back to repaint the composer over an overlay so
+	// menu options end behind the prompt field.
+	promptTop int
+	compH     int
 }
 
 // Tab is one open session tab (row 27).
@@ -70,15 +77,25 @@ type Tab struct {
 	Agent string
 }
 
-// NewChat creates an empty chat bound to a session.
+// NewChat creates an empty chat bound to a session. The sidebar is on
+// by default: it is part of the layout, not a maximized-window extra.
 func NewChat(t theme.Theme, meta store.Meta) *Chat {
 	return &Chat{
-		meta:  meta,
-		theme: t,
-		list:  NewMessageList(t, 100),
-		tabs:  []Tab{{ID: meta.ID, Title: meta.Title, Model: meta.Model, Agent: meta.Agent}},
+		meta:    meta,
+		theme:   t,
+		list:    NewMessageList(t, 100),
+		tabs:    []Tab{{ID: meta.ID, Title: meta.Title, Model: meta.Model, Agent: meta.Agent}},
+		sidebar: true,
 	}
 }
+
+// PromptTop is the frame row where the composer box starts (0 when the
+// route has not rendered a composer yet).
+func (c *Chat) PromptTop() int { return c.promptTop }
+
+// PromptBottom is the frame row just past the footer — the region an
+// overlay must never paint over.
+func (c *Chat) PromptBottom() int { return c.promptTop + c.compH + 1 }
 
 // Load replaces the transcript (session open / tab switch).
 func (c *Chat) Load(msgs []store.Message) {
@@ -261,64 +278,154 @@ func (c *Chat) Scroll(delta int) {
 	}
 }
 
-// composerLines is how many rows the composer block occupies.
-const composerLines = 3
-
 // View renders the route: transcript (+ sidebar widgets), composer,
-// footer.
+// footer. The composer is measured before the transcript so a long
+// prompt can grow the prompt field downward and the transcript simply
+// yields the rows that are left.
 func (c *Chat) View(height, width int) string {
 	if height != c.height || width != c.width {
 		c.Resize(height, width)
 	}
-	// -2: one for the footer, one breathing row — the composer is a
-	// real 3-line box (border/content/border), so the transcript yields
-	// its rows instead of the frame overflowing.
-	transcript := height - composerLines - 2
+	comp := c.composer(width)
+	compH := strings.Count(comp, "\n") + 1
+	// -2: one for the footer, one breathing row.
+	transcript := height - compH - 2
 	if transcript < 3 {
 		transcript = 3
 	}
+	c.compH = compH
+	c.promptTop = transcript
 	c.list.Offset = c.offset
-	if c.sidebar && width >= sidebarMinWidth {
-		sw := sidebarWidth
-		body := lipgloss.JoinHorizontal(lipgloss.Top,
-			c.list.View(transcript, width-sw-1),
-			" "+sidebarView(c.widgets(), transcript, sw, c.theme))
-		return body + "\n" + c.composer(width) + "\n" + c.footer(width)
+
+	// The sidebar is part of the layout, not a maximized-window
+	// extra: it renders at every width the frame can still afford,
+	// shrinking with the window. The transcript block is padded to
+	// its exact column budget so the sidebar sits flush right instead
+	// of hugging whatever the transcript happens to fill.
+	sw := sidebarBudget(width)
+	tw := width - sw - 1
+	if c.sidebar && tw >= 16 {
+		head := strings.Join(padLines(strings.Split(c.list.View(transcript, tw), "\n"), tw), "\n")
+		side := strings.Join(padLines(strings.Split(
+			sidebarView(c.widgets(), transcript, sw, c.theme), "\n"), sw), "\n")
+		body := lipgloss.JoinHorizontal(lipgloss.Top, head, " "+side)
+		return body + "\n" + comp + "\n" + c.footer(width)
 	}
-	return c.list.View(transcript, width) + "\n" + c.composer(width) + "\n" + c.footer(width)
+	head := strings.Join(padLines(strings.Split(c.list.View(transcript, width), "\n"), width), "\n")
+	return head + "\n" + comp + "\n" + c.footer(width)
 }
 
-// composer renders the prompt (or its first line) with state markers.
+// padLines widens every row to w (truncating longer ones) so a block
+// joins flush against the next one instead of hugging the left edge.
+func padLines(lines []string, w int) []string {
+	for i, l := range lines {
+		l = truncate(l, w)
+		if d := w - lipgloss.Width(l); d > 0 {
+			l += strings.Repeat(" ", d)
+		}
+		lines[i] = l
+	}
+	return lines
+}
+
+// composer renders the prompt in a box that grows with the text: a
+// prompt longer than one line wraps under the first (indented to the
+// prompt marker) and the box gains a row per line, so the end being
+// typed always stays visible above the footer. queued/error notices
+// stay single-line.
 func (c *Chat) composer(width int) string {
+	inner := width - 4 // border + padding on each side
+	if inner < 4 {
+		inner = 4
+	}
 	prefix := c.themeStyle(c.theme.Colors.Muted).Render("> ")
-	body := ""
+	var lines []string
 	switch {
 	case c.queued != "":
-		body = c.themeStyle(c.theme.Colors.Warning).Render("queued: " + firstLine(c.queued))
+		lines = []string{prefix + c.themeStyle(c.theme.Colors.Warning).
+			Render("queued: "+firstLine(c.queued))}
 	case c.err != "":
-		body = c.themeStyle(c.theme.Colors.Error).Render("error: " + firstLine(c.err))
+		lines = []string{prefix + c.themeStyle(c.theme.Colors.Error).
+			Render("error: "+firstLine(c.err))}
 	default:
 		text := c.prompt
 		if text == "" && c.flushed != "" {
 			text = c.flushed + "  (pending)"
 		}
-		line := firstLine(text)
-		if n := strings.Count(text, "\n"); n > 0 && text != "" {
-			line += fmt.Sprintf("  [%d lines]", n+1)
+		w := inner - 2 // "> " on the first row, "  " on continuations
+		if w < 8 {
+			w = 8
 		}
-		body = c.themeStyle(c.theme.Colors.Primary).Render(line)
+		lines = wrapText(text, w)
+		if len(lines) == 0 {
+			lines = []string{""}
+		}
+		if max := c.composerMax(); len(lines) > max {
+			lines = lines[len(lines)-max:] // keep the end: that is the typed part
+		}
+		styled := make([]string, len(lines))
+		for i, l := range lines {
+			if i == 0 {
+				styled[i] = prefix + c.themeStyle(c.theme.Colors.Primary).Render(l)
+			} else {
+				styled[i] = c.themeStyle(c.theme.Colors.Primary).Render("  " + l)
+			}
+		}
+		lines = styled
 	}
-	// Boxed prompt: border + padding around the line, full width.
-	content := truncate(prefix+body, width-4)
-	if d := width - 4 - lipgloss.Width(content); d > 0 {
-		content += strings.Repeat(" ", d)
+	for i, l := range lines {
+		l = truncate(l, inner)
+		if d := inner - lipgloss.Width(l); d > 0 {
+			l += strings.Repeat(" ", d)
+		}
+		lines[i] = l
 	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color(c.theme.Border())).
 		Background(lipgloss.Color(c.theme.UserBubble())).
 		Padding(0, 1).
-		Render(content)
+		Render(strings.Join(lines, "\n"))
+}
+
+// composerMax is how many text rows the composer may hold: the frame
+// keeps at least three transcript rows plus the footer.
+func (c *Chat) composerMax() int {
+	if c.height <= 0 {
+		return 20
+	}
+	if m := c.height - 7; m > 0 {
+		return m
+	}
+	return 1
+}
+
+// wrapText wraps s at w columns on word boundaries and keeps hard line
+// breaks; a single word longer than w is split rather than overflowing.
+func wrapText(s string, w int) []string {
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		runes := []rune(para)
+		for len(runes) > w {
+			cut := 0
+			for i := w; i > w/2; i-- { // prefer a break at a space
+				if runes[i] == ' ' {
+					cut = i
+					break
+				}
+			}
+			if cut == 0 {
+				cut = w
+			}
+			out = append(out, string(runes[:cut]))
+			runes = runes[cut:]
+			for len(runes) > 0 && runes[0] == ' ' {
+				runes = runes[1:]
+			}
+		}
+		out = append(out, string(runes))
+	}
+	return out
 }
 
 // footer renders session/model/agent/usage/status plus the tab strip.

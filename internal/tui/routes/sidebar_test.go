@@ -82,29 +82,42 @@ func TestSidebarViewPads(t *testing.T) {
 	}
 }
 
-// TestChatSidebarToggle proves the toggle flips visibility and the view
-// only renders the column when the terminal is wide enough.
+// TestChatSidebarToggle proves the sidebar is part of the layout: it
+// is on by default, renders at any width the frame can afford, sits
+// flush against the right edge, and only the toggle hides it.
 func TestChatSidebarToggle(t *testing.T) {
 	c := newTestChat()
+	if c.ToggleSidebar() {
+		t.Fatal("toggle should turn the default-on sidebar off")
+	}
 	if !c.ToggleSidebar() {
-		t.Fatal("toggle did not turn on")
+		t.Fatal("toggle did not turn the sidebar back on")
 	}
-	wide := c.View(24, 120)
-	if !strings.Contains(wide, "session") {
-		t.Fatalf("wide view missing sidebar:\n%s", wide)
-	}
-	// Every line of the wide view stays within the terminal width.
-	for _, l := range strings.Split(wide, "\n") {
-		if lipglossWidth(l) > 120 {
-			t.Fatalf("line too wide (%d): %q", lipglossWidth(l), l)
+	for _, width := range []int{120, 80} {
+		v := c.View(24, width)
+		if !strings.Contains(v, "session") {
+			t.Fatalf("sidebar missing at %d columns:\n%s", width, v)
 		}
-	}
-	narrow := c.View(24, 80)
-	if strings.Contains(narrow, "\nsession") {
-		t.Fatal("sidebar rendered at 80 columns")
+		// Every line stays within the terminal width, and the sidebar
+		// column starts at its own budget instead of hugging whatever
+		// the transcript filled.
+		want := width - sidebarBudget(width) - 1
+		for _, l := range strings.Split(v, "\n") {
+			if lipglossWidth(l) > width {
+				t.Fatalf("line too wide (%d): %q", lipglossWidth(l), l)
+			}
+			if i := strings.Index(l, "session"); i >= 0 && i < want {
+				t.Fatalf("sidebar at column %d, want >= %d (width %d): %q",
+					i, want, width, l)
+			}
+		}
 	}
 	if c.ToggleSidebar() {
 		t.Fatal("toggle did not turn off")
+	}
+	off := c.View(24, 80)
+	if strings.Contains(off, "session") {
+		t.Fatalf("sidebar still rendered when toggled off:\n%s", off)
 	}
 }
 
