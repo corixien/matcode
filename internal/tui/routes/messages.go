@@ -80,30 +80,31 @@ func (m *MessageList) markdown(text string) string {
 	return strings.TrimRight(out, "\n")
 }
 
-// block renders one tool block, collapsed by default:
+// block renders one tool block on a lighter full-width band,
+// collapsed by default:
 //
 //	▸ bash: ls -la            (running)
 //	▸ read: src/main.go
 //
 // An expanded block appends its output tail.
-func (m *MessageList) block(b ToolBlock, expanded bool) string {
+func (m *MessageList) block(b ToolBlock, expanded bool, width int) string {
 	state := ""
 	if !b.Done {
 		state = " (running)"
 	}
-	head := fmt.Sprintf("▸ %s: %s%s", b.Name, b.Input, state)
+	raw := fmt.Sprintf("▸ %s: %s%s", b.Name, b.Input, state)
+	if expanded && b.Out != "" {
+		raw += "\n" + fg(m.Theme.Colors.Muted).Render(indentTail(b.Out, 2))
+	}
 	style := fg(m.Theme.Colors.Tool)
 	if !b.Done {
 		style = fg(m.Theme.Colors.Warning)
 	}
-	out := style.Render(head)
-	if expanded && b.Out != "" {
-		body := fg(m.Theme.Colors.Muted).
-			MaxWidth(80).
-			Render(indentTail(b.Out, 2))
-		out += "\n" + body
-	}
-	return out
+	return style.
+		Background(lipgloss.Color(m.Theme.UserBubble())).
+		Padding(0, 1).
+		Width(width).
+		Render(raw)
 }
 
 // fg maps a palette color ("#rrggbb" or an ANSI name) to a style.
@@ -196,7 +197,7 @@ func (m *MessageList) visibleLines(width int) []string {
 					Out:   outByID[call.ID],
 				}
 				expanded := i == m.Sel
-				lines = append(lines, strings.Split(m.block(tb, expanded), "\n")...)
+				lines = append(lines, strings.Split(m.block(tb, expanded, width), "\n")...)
 				lines = append(lines, "")
 			}
 		case "tool":
@@ -214,7 +215,7 @@ func (m *MessageList) visibleLines(width int) []string {
 		}
 	}
 	for _, b := range m.Live {
-		lines = append(lines, m.block(b, true), "")
+		lines = append(lines, m.block(b, true, width), "")
 	}
 	if m.Draft != "" {
 		lines = append(lines, indentTail(m.Draft, 2))

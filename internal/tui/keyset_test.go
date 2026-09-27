@@ -66,24 +66,38 @@ func TestParseKeyInput(t *testing.T) {
 	}
 }
 
-// TestBuiltinSlashHasKey: /key is discoverable in the slash list.
-func TestBuiltinSlashHasKey(t *testing.T) {
-	found := false
+// TestBuiltinSlashHasProvider: /provider is discoverable in the slash
+// list and the old /key id still resolves as its alias.
+func TestBuiltinSlashHasProvider(t *testing.T) {
+	var found *SlashCommand
 	for _, c := range builtinSlashCommands() {
-		if c.ID == "key" {
-			found = true
+		if c.ID == "provider" {
+			cc := c
+			found = &cc
 		}
 	}
-	if !found {
-		t.Error("builtin slash list has no key command")
+	if found == nil {
+		t.Fatal("builtin slash list has no provider command")
+	}
+	alias := false
+	for _, al := range found.Aliases {
+		if al == "key" {
+			alias = true
+		}
+	}
+	if !alias {
+		t.Error("provider command should keep the key alias")
+	}
+	if !builtinSlashID("key") {
+		t.Error("builtinSlashID(key) should resolve via the alias")
 	}
 }
 
-// TestSaveKeyPersists: "/key mock sk-test" writes the data dir .env
-// (0600) and exports the var.
-func TestSaveKeyPersists(t *testing.T) {
+// TestSaveProviderKeyPersists: saveProviderKey writes the data dir .env
+// (0600) and exports the var; an unknown provider reports instead.
+func TestSaveProviderKeyPersists(t *testing.T) {
 	a := keyFixture(t)
-	a.saveKey("mock sk-test-123")
+	a.saveProviderKey("mock", "sk-test-123")
 
 	path := filepath.Join(a.cfg.DataDir(), ".env")
 	got, err := os.ReadFile(path)
@@ -100,27 +114,66 @@ func TestSaveKeyPersists(t *testing.T) {
 		t.Errorf("env = %q, want sk-test-123", env)
 	}
 	// Unknown provider reports instead of panicking.
-	a.saveKey("nope sk-x")
+	a.saveProviderKey("nope", "sk-x")
 	if !strings.Contains(a.status, "unknown provider") {
 		t.Errorf("status = %q, want unknown provider", a.status)
 	}
 }
 
-// TestOpenKeyOverlay: bare /key opens the masked dialog.
-func TestOpenKeyOverlay(t *testing.T) {
+// TestOpenProviderMenu: bare /provider opens the searchable provider
+// menu; with arguments it starts key verification without a menu.
+func TestOpenProviderMenu(t *testing.T) {
 	a := keyFixture(t)
-	if _, _ = a.openKey(""); a.overlay == nil || a.overlay.kind != "key" {
-		t.Fatalf("overlay = %+v, want kind key", a.overlay)
+	if _, _ = a.openProvider(""); a.overlay == nil || a.overlay.kind != "provider" {
+		t.Fatalf("overlay = %+v, want kind provider", a.overlay)
 	}
-	// With arguments it saves directly and leaves no overlay behind.
+	found := false
+	for _, it := range a.overlay.items {
+		if strings.HasPrefix(it, "mock ") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("provider menu lacks mock: %v", a.overlay.items)
+	}
+	// With arguments it verifies directly and leaves no overlay behind.
 	a.overlay = nil
-	if _, _ = a.openKey("mock sk-direct"); a.overlay != nil {
-		t.Error("args should save without opening the dialog")
+	if _, _ = a.openProvider("mock sk-direct"); a.overlay != nil {
+		t.Error("args should verify without opening the menu")
+	}
+	if !strings.Contains(a.status, "checking") {
+		t.Errorf("status = %q, want checking", a.status)
 	}
 }
 
-// TestOpenRouterInPicker: once the key exists (via /key or .env), the
-// openrouter preset becomes a model-pickable choice with its default id.
+// TestOpenProviderKey: picking a menu row switches to the masked input
+// bound to that provider; unknown rows report instead.
+func TestOpenProviderKey(t *testing.T) {
+	a := keyFixture(t)
+	row := ""
+	for _, it := range a.providerItems() {
+		if strings.HasPrefix(it, "mock ") {
+			row = it
+		}
+	}
+	if row == "" {
+		t.Fatal("providerItems lacks mock")
+	}
+	a.openProviderKey(row)
+	if a.overlay == nil || a.overlay.kind != "key" {
+		t.Fatalf("overlay = %+v, want kind key", a.overlay)
+	}
+	if a.overlay.keyProvider != "mock" {
+		t.Errorf("keyProvider = %q, want mock", a.overlay.keyProvider)
+	}
+	a.openProviderKey("nope ENV X")
+	if !strings.Contains(a.status, "unknown provider") {
+		t.Errorf("status = %q, want unknown provider", a.status)
+	}
+}
+
+// TestOpenRouterInPicker: once the key exists (via /provider or .env),
+// the openrouter preset becomes a model-pickable choice.
 func TestOpenRouterInPicker(t *testing.T) {
 	a := keyFixture(t)
 	t.Setenv("OPENROUTER_API_KEY", "")
@@ -135,15 +188,17 @@ func TestOpenRouterInPicker(t *testing.T) {
 	if hasOpenRouter() {
 		t.Fatal("openrouter offered without a key")
 	}
-	a.saveKey("openrouter sk-or-test")
+	a.saveProviderKey("openrouter", "sk-or-test")
 	if !hasOpenRouter() {
 		t.Fatalf("openrouter missing from choices: %v", a.modelChoices())
 	}
 }
 
-// TestKeyOverlayMasks: the typed key is never rendered back.
+// TestKeyOverlayMasks: the typed key is never rendered back, and the
+// bound provider is named in the mask line.
 func TestKeyOverlayMasks(t *testing.T) {
 	o := newOverlay("key", "api key for mock", nil, theme.Default)
+	o.keyProvider = "mock"
 	o.query = "sk-secret-xyz"
 	line := o.queryLine()
 	if strings.Contains(line, "sk-secret-xyz") {
@@ -151,5 +206,8 @@ func TestKeyOverlayMasks(t *testing.T) {
 	}
 	if !strings.Contains(line, "•") {
 		t.Errorf("no mask bullets: %q", line)
+	}
+	if !strings.Contains(line, "mock") {
+		t.Errorf("provider name missing from mask line: %q", line)
 	}
 }

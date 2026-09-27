@@ -52,7 +52,7 @@ func TestOpenRouterFromDotEnv(t *testing.T) {
 	}
 }
 
-// TestOpenRouterNoKey: without a credential the error names the fix (/key).
+// TestOpenRouterNoKey: without a credential the error names the fix (/provider).
 func TestOpenRouterNoKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // no global .env
 	t.Setenv("OPENROUTER_API_KEY", "")
@@ -64,7 +64,7 @@ func TestOpenRouterNoKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error without key")
 	}
-	if !strings.Contains(err.Error(), "/key") {
-		t.Errorf("error should mention /key, got: %v", err)
+	if !strings.Contains(err.Error(), "/provider") {
+		t.Errorf("error should mention /provider, got: %v", err)
 	}
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"matcode/internal/agents"
 	"matcode/internal/app"
+	"matcode/internal/catalog"
 	"matcode/internal/cmds"
 	"matcode/internal/config"
 	"matcode/internal/store"
@@ -243,8 +245,8 @@ func (a *App) runCommandArgs(id, args string) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "btw":
 		return a.openBtw()
-	case "key":
-		return a.openKey(args)
+	case "provider", "key":
+		return a.openProvider(args)
 	case "details":
 		if t != nil {
 			a.status = fmt.Sprintf("%s  model=%s  agent=%s  %d messages",
@@ -268,12 +270,21 @@ func (a *App) runCommandArgs(id, args string) (tea.Model, tea.Cmd) {
 
 // toggleSidebar flips the sidebar widget column (row 35).
 
-// modelChoices lists provider/model pairs from config: every model a
-// provider declares (its `models` list) or its default_model alone (row 35
-// model picker with variants).
+// modelChoices lists provider/model pairs from config, grouped by
+// provider: providers are walked in name order so the picker reads as
+// one block per provider, and each block holds that provider's declared
+// models (its `models` list, its default_model, or — for built-ins
+// without either — the embedded models.dev catalog). Only providers
+// whose credential resolves are offered (row 35 model picker).
 func (a *App) modelChoices() []string {
+	names := make([]string, 0, len(a.cfg.Providers))
+	for name := range a.cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	var out []string
-	for name, p := range a.cfg.Providers {
+	for _, name := range names {
+		p := a.cfg.Providers[name]
 		// A provider whose credential env var is missing cannot serve a
 		// turn; offering it would only produce a red status line.
 		if _, err := p.ResolveKey(); err != nil {
@@ -290,8 +301,7 @@ func (a *App) modelChoices() []string {
 			// model the config already addresses it by.
 			models = []string{strings.TrimPrefix(a.cfg.Model, name+"/")}
 		default:
-			// No addressable model — "provider/model" is the only form
-			// the engine accepts.
+			models = catalogModels(name)
 		}
 		for _, m := range models {
 			if m != "" {
@@ -299,11 +309,43 @@ func (a *App) modelChoices() []string {
 			}
 		}
 	}
-	sortStrings(out)
 	if t := a.cur(); t != nil && t.sess.Meta.Model != "" {
 		out = append([]string{t.sess.Meta.Model}, out...)
 	}
 	return dedupe(out)
+}
+
+// catalogModels falls back to the embedded models.dev snapshot for
+// keyed providers that declare no models of their own, keeping only
+// chat-capable ids (no image/video/audio/embedding endpoints).
+func catalogModels(provider string) []string {
+	prov, ok := catalog.LookupProvider(provider)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for id := range prov.Models {
+		if !chatModel(id) {
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// chatModel reports whether a catalog id looks like a chat model.
+func chatModel(id string) bool {
+	l := strings.ToLower(id)
+	for _, bad := range []string{
+		"image", "video", "audio", "tts", "embed", "whisper",
+		"moderation", "dall", "veo", "lyria", "transcribe",
+	} {
+		if strings.Contains(l, bad) {
+			return false
+		}
+	}
+	return true
 }
 
 // agentChoices lists built-in agent ids.

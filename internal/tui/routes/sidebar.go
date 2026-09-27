@@ -119,7 +119,7 @@ func touchedFiles(msgs []store.Message) []string {
 				continue
 			}
 			seen[in.Path] = true
-			out = append(out, truncate(in.Path, sidebarWidth-2))
+			out = append(out, truncate(in.Path, sidebarWidth-4))
 		}
 	}
 	sort.Strings(out)
@@ -134,26 +134,39 @@ func plural(n int, one, many string) string {
 	return strconv.Itoa(n) + " " + many
 }
 
+// pad extends s with spaces to n display cells (never truncates).
+func pad(s string, n int) string {
+	if w := lipgloss.Width(s); w < n {
+		return s + strings.Repeat(" ", n-w)
+	}
+	return s
+}
+
 // sidebarView renders the widgets as a height-tall, width-wide column,
-// padding empty lines so it can sit next to the transcript.
+// padding empty lines so it can sit next to the transcript. Each widget
+// is a bordered panel on the lighter surface (OpenCode-style boxes).
 func sidebarView(ws []Widget, height, width int, t theme.Theme) string {
 	if width < 12 {
 		width = 12
 	}
+	innerW := width - 4 // 1px margin + border + padding per side
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.Colors.Secondary))
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Colors.Muted))
+	box := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color(t.Border())).
+		Background(lipgloss.Color(t.UserBubble())).
+		Padding(0, 1)
 	var lines []string
 	for _, w := range ws {
 		if len(lines) >= height {
 			break
 		}
-		lines = append(lines, title.Render(truncate(w.Title, width)))
+		inner := []string{pad(title.Render(truncate(w.Title, innerW)), innerW)}
 		for _, l := range w.Lines {
-			if len(lines) >= height-1 {
-				break
-			}
-			lines = append(lines, muted.Render(truncate(l, width)))
+			inner = append(inner, pad(muted.Render(truncate(l, innerW)), innerW))
 		}
+		lines = append(lines, strings.Split(box.Render(strings.Join(inner, "\n")), "\n")...)
 		lines = append(lines, "")
 	}
 	if len(lines) > height {

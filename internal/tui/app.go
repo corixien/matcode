@@ -150,10 +150,10 @@ func New(opts Options) (*App, error) {
 		}
 		return nil, err
 	}
-	// Booting without a credential is allowed (row: /key) — say so once
+	// Booting without a credential is allowed (row: /provider) — say so once
 	// instead of failing, so the fix is discoverable from the status line.
 	if t := a.cur(); t != nil && t.built != nil && t.built.Engine.Provider == nil {
-		a.status = "no API key — type /key [provider] <key>"
+		a.status = "no API key — type /provider <provider> <key>"
 	}
 	return a, nil
 }
@@ -320,6 +320,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return a, nil
+	case keyCheckMsg:
+		// Only a rejected credential stays unstored; anything else
+		// (accepted, or unverifiable offline) is saved as given.
+		if m.err != nil {
+			a.status = "rejected: " + m.err.Error() + " — key not stored"
+			return a, nil
+		}
+		a.saveProviderKey(m.name, m.key)
+		return a, nil
 	case *routes.AppendMsg, *routes.StreamMsg, *routes.TurnStartMsg,
 		*routes.ToolMsg, *routes.UsageMsg, *routes.TurnDoneMsg:
 		if t := a.cur(); t != nil {
@@ -361,15 +370,89 @@ func (a *App) View() string {
 			body = t.chat.View(a.height, a.width)
 		}
 	}
+	lines := strings.Split(body, "\n")
 	if a.overlay != nil {
-		dialog := a.overlay.view(a.height, a.width)
-		body = lipgloss.JoinVertical(lipgloss.Left, body, dialog)
+		dialog := a.overlay.view(a.height-4, a.width-6)
+		lines = overlayPanel(lines, dialog, a.height, a.width, a.theme)
 	}
 	if a.status != "" {
-		body += "\n" + lipgloss.NewStyle().Foreground(
-			lipgloss.Color(a.theme.Muted())).Render(truncate(a.status, a.width))
+		lines = append(lines, lipgloss.NewStyle().Foreground(
+			lipgloss.Color(a.theme.Muted())).Render(truncate(a.status, a.width)))
 	}
-	return body
+	return a.solid(strings.Join(lines, "\n"))
+}
+
+// overlayPanel centers an overlay dialog as a bordered box on the
+// current frame. Dialog rows overwrite the body in place — appending
+// would push the box past the bottom edge, since the chat route already
+// fills the screen.
+func overlayPanel(lines []string, dialog string, height, width int, t theme.Theme) []string {
+	if width < 12 {
+		return lines
+	}
+	inner := width - 6 // 1 col margin + border + padding on each side
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(t.Border())).
+		Background(lipgloss.Color(t.UserBubble())).
+		Padding(0, 1)
+	rows := strings.Split(dialog, "\n")
+	for i, r := range rows {
+		if d := inner - lipgloss.Width(r); d > 0 {
+			rows[i] = r + strings.Repeat(" ", d)
+		}
+	}
+	boxLines := strings.Split(box.Render(strings.Join(rows, "\n")), "\n")
+	start := (height - len(boxLines)) / 2
+	if start < 0 {
+		start = 0
+	}
+	for len(lines) < start+len(boxLines) {
+		lines = append(lines, "")
+	}
+	for i, bl := range boxLines {
+		lines[start+i] = " " + bl
+	}
+	return lines
+}
+
+// solid paints the whole frame with the theme background so the app is
+// one solid surface: every line is padded (or trimmed) to the terminal
+// width, the background sequence is re-stated after any inner style
+// reset, and the frame is padded to the terminal height.
+func (a *App) solid(body string) string {
+	if a.width <= 0 || a.height <= 0 {
+		return body
+	}
+	rendered := lipgloss.NewStyle().Background(lipgloss.Color(a.theme.Background())).Render("x")
+	if !strings.HasSuffix(rendered, "x\x1b[0m") {
+		return body // colourless profile: nothing to paint
+	}
+	seq := strings.TrimSuffix(rendered, "x\x1b[0m")
+	lines := strings.Split(body, "\n")
+	if len(lines) > a.height {
+		lines = lines[len(lines)-a.height:] // keep footer/status, drop transcript top
+	}
+	painted := make([]string, 0, a.height)
+	for _, l := range lines {
+		painted = append(painted, a.paintLine(l, seq))
+	}
+	blank := a.paintLine("", seq)
+	for len(painted) < a.height {
+		painted = append(painted, blank)
+	}
+	return strings.Join(painted, "\n")
+}
+
+// paintLine pads one frame line to the terminal width and keeps the
+// background alive across inner "reset" sequences.
+func (a *App) paintLine(l, seq string) string {
+	if d := a.width - lipgloss.Width(l); d > 0 {
+		l += strings.Repeat(" ", d)
+	} else if d < 0 {
+		l = truncate(l, a.width)
+	}
+	return seq + strings.ReplaceAll(l, "\x1b[0m", "\x1b[0m"+seq) + "\x1b[0m"
 }
 
 // Run starts the program and blocks until it exits.

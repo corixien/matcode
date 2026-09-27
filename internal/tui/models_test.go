@@ -82,6 +82,34 @@ func TestModelChoicesKeepsCurrentModel(t *testing.T) {
 	}
 }
 
+// TestModelChoicesCatalogFallback: a keyed provider with no models or
+// default falls back to the embedded catalog, filtered to chat models.
+func TestModelChoicesCatalogFallback(t *testing.T) {
+	t.Setenv("GROQ_API_KEY", "k")
+	cwd := t.TempDir()
+	cfg, err := config.Load(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{cfg: cfg, cwd: cwd, theme: theme.Default}
+	var groq []string
+	for _, c := range a.modelChoices() {
+		if strings.HasPrefix(c, "groq/") {
+			groq = append(groq, c)
+		}
+	}
+	if len(groq) == 0 {
+		t.Fatal("no groq catalog choices")
+	}
+	for _, c := range groq {
+		for _, bad := range []string{"image", "audio", "embed", "whisper"} {
+			if strings.Contains(c, bad) {
+				t.Errorf("non-chat id %q in choices", c)
+			}
+		}
+	}
+}
+
 // sessWithModel builds a session carrying one model id.
 func sessWithModel(model string) *store.Session {
 	return &store.Session{Meta: store.Meta{ID: "ses_ghost", Model: model}}

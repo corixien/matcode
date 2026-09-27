@@ -139,3 +139,27 @@ func TestOpenRouterPreset(t *testing.T) {
 		t.Errorf("Dialect = %q, want openai", p.Dialect)
 	}
 }
+
+// TestOpenCodeGoPreset pins the OpenCode Go gateway preset: same auth
+// env as Zen, its /zen/go/v1 base, and a chat-safe model list.
+func TestOpenCodeGoPreset(t *testing.T) {
+	p, ok := defaultProviders()["opencode-go"]
+	if !ok {
+		t.Fatal("opencode-go preset missing")
+	}
+	if p.BaseURL != "https://opencode.ai/zen/go/v1" {
+		t.Errorf("BaseURL = %q", p.BaseURL)
+	}
+	if p.APIKey.Env != "OPENCODE_API_KEY" {
+		t.Errorf("APIKey.Env = %q, want OPENCODE_API_KEY", p.APIKey.Env)
+	}
+	if p.DefaultModel != "glm-5.3" {
+		t.Errorf("DefaultModel = %q, want glm-5.3", p.DefaultModel)
+	}
+	if len(p.Models) == 0 {
+		t.Error("Models empty")
+	}
+	if p.Dialect != "openai" {
+		t.Errorf("Dialect = %q, want openai", p.Dialect)
+	}
+}

@@ -17,13 +17,17 @@ import (
 // request. Every overlay shares select/filter/close semantics; what
 // picking means depends on kind (see App.overlayPick).
 type overlay struct {
-	kind    string // palette | slash | mention | recents | sessions | model | agent | theme | undo | redo | help | btw | ask | key
+	kind    string // palette | slash | mention | recents | sessions | model | agent | theme | undo | redo | help | btw | ask | provider | key
 	title   string
 	query   string
 	items   []string
 	sel     int
 	listOff int
 	theme   theme.Theme
+
+	// keyProvider names the provider a kind=="key" dialog will store
+	// the typed credential under (set by App.openProviderKey).
+	keyProvider string
 
 	// ask (row 29): the engine's approval request.
 	askAction string
@@ -170,12 +174,14 @@ func (o *overlay) queryLine() string {
 		return "@" + o.query
 	case "key":
 		// Masked: the key must never be rendered back to the screen.
-		return "key " + strings.Repeat("•", len([]rune(o.query)))
+		return "key " + o.keyProvider + " " + strings.Repeat("•", len([]rune(o.query)))
 	case "btw":
 		if o.btwPending {
 			return "? " + o.query + " …"
 		}
 		return "? " + o.query
+	case "provider", "model":
+		return o.query
 	}
 	return "/" + o.query
 }

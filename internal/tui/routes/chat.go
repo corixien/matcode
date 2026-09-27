@@ -270,7 +270,10 @@ func (c *Chat) View(height, width int) string {
 	if height != c.height || width != c.width {
 		c.Resize(height, width)
 	}
-	transcript := height - composerLines - 1 // -1 for the footer
+	// -2: one for the footer, one breathing row — the composer is a
+	// real 3-line box (border/content/border), so the transcript yields
+	// its rows instead of the frame overflowing.
+	transcript := height - composerLines - 2
 	if transcript < 3 {
 		transcript = 3
 	}
@@ -303,9 +306,19 @@ func (c *Chat) composer(width int) string {
 		if n := strings.Count(text, "\n"); n > 0 && text != "" {
 			line += fmt.Sprintf("  [%d lines]", n+1)
 		}
-		body = c.themeStyle(c.theme.Colors.Primary).Render(truncate(line, width-2))
+		body = c.themeStyle(c.theme.Colors.Primary).Render(line)
 	}
-	return prefix + body
+	// Boxed prompt: border + padding around the line, full width.
+	content := truncate(prefix+body, width-4)
+	if d := width - 4 - lipgloss.Width(content); d > 0 {
+		content += strings.Repeat(" ", d)
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color(c.theme.Border())).
+		Background(lipgloss.Color(c.theme.UserBubble())).
+		Padding(0, 1).
+		Render(content)
 }
 
 // footer renders session/model/agent/usage/status plus the tab strip.

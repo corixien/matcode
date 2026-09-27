@@ -310,10 +310,10 @@ func (e *Engine) complete(ctx context.Context, history []store.Message) (string,
 // completeWith is complete with an explicit system prompt and tool set —
 // the generator path for stateless calls (row 40) overrides both.
 func (e *Engine) completeWith(ctx context.Context, history []store.Message, system string, tools []providers.ToolSchema) (string, []store.ToolCall, providers.Usage, error) {
-	// No credential at boot (the TUI starts without one so /key can set
+	// No credential at boot (the TUI starts without one so /provider can set
 	// it): fail the turn with a fixable message instead of panicking.
 	if e.Provider == nil {
-		return "", nil, providers.Usage{}, fmt.Errorf("no API key for %q — set one with /key in the TUI, in the data dir .env, or in the shell", e.Model)
+		return "", nil, providers.Usage{}, fmt.Errorf("no API key for %q — set one with /provider in the TUI, in the data dir .env, or in the shell", e.Model)
 	}
 	system, msgs := payload(system, history)
 	// session.context (§8): every session plugin stacks lines onto the

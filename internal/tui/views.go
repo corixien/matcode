@@ -131,7 +131,7 @@ func (a *App) apiKeyStatus() string {
 		return "n/a"
 	}
 	if _, err := p.ResolveKey(); err != nil {
-		return "missing — /key"
+		return "missing — /provider"
 	}
 	return "set (" + p.APIKey.Env + ")"
 }

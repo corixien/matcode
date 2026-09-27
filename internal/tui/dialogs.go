@@ -28,16 +28,21 @@ func (o *overlay) key(k tea.KeyMsg, a *App) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	}
-	// The API-key dialog is a masked input (row: /key): type the key,
-	// enter persists it to the data dir .env, esc cancels.
+	// The API-key dialog is a masked input: type the key, enter
+	// verifies it against the provider and stores it in .env, esc cancels.
 	if o.kind == "key" {
 		switch k.String() {
 		case "esc", "ctrl+c":
 			a.overlay = nil
 		case "enter":
 			input := o.query
+			name := o.keyProvider
 			a.overlay = nil
-			a.saveKey(input)
+			if name == "" {
+				a.submitProviderKey(input)
+			} else {
+				a.checkProviderKey(name, input)
+			}
 		case "backspace":
 			o.backspace()
 		default:
@@ -201,6 +206,9 @@ func (a *App) overlayPick(kind, item string) (tea.Model, tea.Cmd) {
 		}
 	case "model":
 		return a.applyModelChoice(item)
+	case "provider":
+		a.openProviderKey(item)
+		return a, nil
 	case "agent":
 		return a.applyAgentChoice(item)
 	case "theme":
@@ -259,7 +267,11 @@ func (a *App) openRecents() (tea.Model, tea.Cmd) {
 func (a *App) openPicker(kind, title string, items []string) (tea.Model, tea.Cmd) {
 	a.status = ""
 	if len(items) == 0 {
-		a.status = "nothing to choose"
+		if kind == "model" {
+			a.status = "no provider has an api key yet — /provider to add one"
+		} else {
+			a.status = "nothing to choose"
+		}
 		return a, nil
 	}
 	a.overlay = newOverlay(kind, title, items, a.theme)

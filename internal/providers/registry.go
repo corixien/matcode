@@ -20,7 +20,7 @@ func For(cfg *config.Config, ref string) (Provider, string, error) {
 	}
 	key, err := spec.ResolveKey()
 	if err != nil {
-		return nil, "", fmt.Errorf("%s: %w (set it in your shell, in the data dir .env, or with /key in the TUI)", name, err)
+		return nil, "", fmt.Errorf("%s: %w (set it in your shell, in the data dir .env, or with /provider in the TUI)", name, err)
 	}
 	if model == "" {
 		model = spec.DefaultModel
